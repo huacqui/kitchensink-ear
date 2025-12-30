@@ -3,15 +3,17 @@ metadata:
   name: kitchensink-ear-eap74-jdk8-devspaces325
 
 components:
+  # Cache Maven persistente
   - name: m2
     volume:
       size: 10Gi
 
+  # Datos EAP (para que tenga permisos de escritura en standalone/*)
   - name: eap-data
     volume:
       size: 10Gi
 
-  # IDE / tooling Dev Spaces 3.25
+  # IDE / tooling (Dev Spaces 3.25)
   - name: development-tooling
     container:
       image: registry.redhat.io/devspaces/udi-rhel9:3.25.0
@@ -37,38 +39,46 @@ components:
         - name: m2
           path: /home/jboss/.m2
 
-  # Runtime EAP dentro del workspace (usar launch de OpenShift + desactivar Jolokia)
+  # Runtime EAP dentro del workspace (misma imagen builder, arranque OpenShift)
   - name: eap
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
       memoryLimit: 4Gi
       cpuLimit: 2000m
 
-      # Importante: usar el launch script (maneja ajustes y evita placeholders sin resolver)
       command: ["/bin/bash", "-lc"]
       args:
         - |
           set -euo pipefail
-          echo "Starting EAP via openshift-launch.sh"
+          echo "Starting EAP via /opt/eap/bin/openshift-launch.sh"
           exec /opt/eap/bin/openshift-launch.sh
 
       env:
-        # Evita el error de Jolokia (bind/keystore)
+        # Evita el error de Jolokia (keystore/bind)
         - name: AB_JOLOKIA_OFF
           value: "true"
 
-        # Evita placeholders de standalone-openshift.xml en este escenario “workspace”
+        # Evita placeholders de standalone-openshift.xml en modo workspace
         - name: JBOSS_CONFIG
           value: "standalone.xml"
 
-        # Asegura bind a todas las interfaces
+        # Bind de app y management
         - name: JBOSS_BIND_ADDRESS
           value: "0.0.0.0"
         - name: JBOSS_BIND_ADDRESS_MANAGEMENT
           value: "0.0.0.0"
 
+        # FIX: mover management ports (9990 ocupado en el pod)
+        - name: JAVA_OPTS_APPEND
+          value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
+
+        # Opcional: controla consumo de RAM si tu workspace es ajustado
+        # (puedes comentar si no lo necesitas)
+        - name: JAVA_MAX_MEM_RATIO
+          value: "50"
+
       volumeMounts:
-        # Layout /opt/eap (es el que mostraron tus logs)
+        # Asegura escritura en rutas críticas de EAP (según tu log, JBOSS_HOME=/opt/eap)
         - name: eap-data
           path: /opt/eap/standalone/tmp
         - name: eap-data
@@ -90,8 +100,7 @@ commands:
       workingDir: /projects
       commandLine: |
         set -e
-        java -version
-        mvn -version
+        echo "[build-jdk8]"; java -version; mvn -version
 
   - id: build-ear
     exec:
@@ -114,3 +123,11 @@ commands:
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
         echo "Done."
+
+  - id: tail-eap-log
+    exec:
+      component: eap
+      workingDir: /projects
+      commandLine: |
+        set -e
+        tail -n 200 -f /opt/eap/standalone/log/server.log
