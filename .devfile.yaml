@@ -3,17 +3,15 @@ metadata:
   name: kitchensink-ear-eap74-jdk8-devspaces325
 
 components:
-  # Cache Maven persistente
   - name: m2
     volume:
       size: 10Gi
 
-  # Datos/runtime EAP persistentes (y escribibles)
   - name: eap-data
     volume:
       size: 5Gi
 
-  # IDE / tooling de Dev Spaces 3.25
+  # IDE / tooling Dev Spaces 3.25
   - name: development-tooling
     container:
       image: registry.redhat.io/devspaces/udi-rhel9:3.25.0
@@ -26,7 +24,7 @@ components:
         - name: m2
           path: /home/user/.m2
 
-  # Build con Java 8 (EAP 7.4 builder OpenJDK8)
+  # Build Java 8 (usamos la imagen S2I/builder de EAP 7.4 JDK8)
   - name: build-jdk8
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
@@ -39,27 +37,40 @@ components:
         - name: m2
           path: /home/jboss/.m2
 
-  # Runtime EAP 7.4 con Java 8 (fix anti CrashLoop)
+  # Runtime EAP dentro del workspace: OJO -> usar builder (incluye el servidor)
   - name: eap
     container:
-      image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-runtime-openshift-rhel8:7.4.23
+      image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
       memoryLimit: 4Gi
       cpuLimit: 2000m
 
-      # Forzamos arranque estándar (evita problemas del launcher en workspace)
-      command: ["/opt/eap/bin/standalone.sh"]
-      args: ["-b", "0.0.0.0", "-bmanagement", "0.0.0.0"]
+      # Script de arranque robusto: busca standalone.sh y arranca;
+      # si no existe, deja el contenedor vivo para inspección (evita CrashLoop)
+      command: ["/bin/bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          # heap conservador para evitar OOM en workspaces
+          export JAVA_OPTS="${JAVA_OPTS:-}-Xms256m -Xmx1024m -Djava.net.preferIPv4Stack=true"
 
-      env:
-        - name: JBOSS_HOME
-          value: /opt/eap
+          for CAND in \
+            /opt/eap/bin/standalone.sh \
+            /opt/jboss/eap/bin/standalone.sh \
+            /opt/jboss/container/jboss-eap/bin/standalone.sh
+          do
+            if [ -x "$CAND" ]; then
+              echo "Starting EAP using: $CAND"
+              exec "$CAND" -b 0.0.0.0 -bmanagement 0.0.0.0
+            fi
+          done
 
-        # Heap conservador para evitar OOM con límites del workspace
-        - name: JAVA_OPTS
-          value: "-Xms256m -Xmx1024m -Djava.net.preferIPv4Stack=true"
+          echo "ERROR: standalone.sh not found in known locations."
+          echo "This typically happens when using a *runtime/intermediate* image that does not include the server."
+          echo "Use the S2I/builder image: jboss-eap-7/eap74-openjdk8-openshift-rhel8"
+          sleep infinity
 
       volumeMounts:
-        # Asegura escritura donde EAP lo necesita
+        # directorios que EAP escribe; además en estas imágenes deployments suele linkear a /deployments
         - name: eap-data
           path: /opt/eap/standalone/tmp
         - name: eap-data
@@ -67,7 +78,7 @@ components:
         - name: eap-data
           path: /opt/eap/standalone/log
         - name: eap-data
-          path: /opt/eap/standalone/deployments
+          path: /deployments
 
       endpoints:
         - name: http
@@ -75,13 +86,14 @@ components:
           exposure: public
 
 commands:
-  - id: verify-images
+  - id: verify-java8
     exec:
       component: build-jdk8
       workingDir: /projects
       commandLine: |
         set -e
-        echo "[build-jdk8]"; java -version; mvn -version
+        java -version
+        mvn -version
 
   - id: build-ear
     exec:
@@ -100,7 +112,13 @@ commands:
         set -euo pipefail
         EAR="$(ls -1 ear/target/*.ear | head -n 1)"
         echo "Deploying: $EAR"
-        DEPLOY_DIR="${JBOSS_HOME}/standalone/deployments"
+
+        if [ -d /deployments ]; then
+          DEPLOY_DIR=/deployments
+        else
+          DEPLOY_DIR="${JBOSS_HOME:-/opt/eap}/standalone/deployments"
+        fi
+
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
         echo "Done."
@@ -111,6 +129,6 @@ commands:
       workingDir: /projects
       commandLine: |
         set -e
-        LOG="${JBOSS_HOME}/standalone/log/server.log"
+        LOG="${JBOSS_HOME:-/opt/eap}/standalone/log/server.log"
         echo "Tailing: $LOG"
         tail -n 200 -f "$LOG"
