@@ -1,0 +1,78 @@
+schemaVersion: 2.2.0
+metadata:
+  name: kitchensink-ear-eap74-jdk8
+
+components:
+  - name: m2
+    volume:
+      size: 10Gi
+
+  # IDE / tooling (Dev Spaces 3.25 UDI oficial)
+  - name: development-tooling
+    container:
+      image: registry.redhat.io/devspaces/udi-rhel9:3.25.0
+      memoryLimit: 6Gi
+      cpuLimit: 4000m
+      env:
+        - name: MAVEN_OPTS
+          value: "-Dmaven.repo.local=/home/user/.m2/repository"
+      volumeMounts:
+        - name: m2
+          path: /home/user/.m2
+
+  # Build con JDK 8 (EAP 7.4 builder OpenJDK8)
+  - name: build-jdk8
+    container:
+      image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
+      memoryLimit: 6Gi
+      cpuLimit: 4000m
+      env:
+        - name: MAVEN_OPTS
+          value: "-Dmaven.repo.local=/home/jboss/.m2/repository"
+      volumeMounts:
+        - name: m2
+          path: /home/jboss/.m2
+
+  # Runtime EAP 7.4 con JDK 8 (RHEL8)
+  - name: eap
+    container:
+      image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-runtime-openshift-rhel8:7.4.23
+      memoryLimit: 4Gi
+      cpuLimit: 2000m
+      endpoints:
+        - name: http
+          targetPort: 8080
+          exposure: public
+      env:
+        - name: JBOSS_BIND_ADDRESS
+          value: "0.0.0.0"
+        - name: JBOSS_BIND_ADDRESS_MANAGEMENT
+          value: "0.0.0.0"
+
+commands:
+  - id: verify-java8
+    exec:
+      component: build-jdk8
+      workingDir: /projects
+      commandLine: java -version && mvn -version
+
+  - id: build-ear
+    exec:
+      component: build-jdk8
+      workingDir: /projects
+      commandLine: mvn -B -DskipTests -pl ear -am clean package
+
+  - id: deploy-ear
+    exec:
+      component: eap
+      workingDir: /projects
+      commandLine: >
+        /bin/bash -lc '
+          set -euo pipefail;
+          EAR=$(ls -1 ear/target/*.ear | head -n 1);
+          echo "Deploying: $EAR";
+          DEPLOY_DIR="${JBOSS_HOME}/standalone/deployments";
+          cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear";
+          touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy";
+          echo "Done."
+        '
