@@ -1,13 +1,19 @@
 schemaVersion: 2.2.0
 metadata:
-  name: kitchensink-ear-eap74-jdk8
+  name: kitchensink-ear-eap74-jdk8-devspaces325
 
 components:
+  # Cache Maven persistente
   - name: m2
     volume:
       size: 10Gi
 
-  # IDE / tooling (Dev Spaces 3.25 UDI oficial)
+  # Datos/runtime EAP persistentes (y escribibles)
+  - name: eap-data
+    volume:
+      size: 5Gi
+
+  # IDE / tooling de Dev Spaces 3.25
   - name: development-tooling
     container:
       image: registry.redhat.io/devspaces/udi-rhel9:3.25.0
@@ -20,7 +26,7 @@ components:
         - name: m2
           path: /home/user/.m2
 
-  # Build con JDK 8 (EAP 7.4 builder OpenJDK8)
+  # Build con Java 8 (EAP 7.4 builder OpenJDK8)
   - name: build-jdk8
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
@@ -33,46 +39,78 @@ components:
         - name: m2
           path: /home/jboss/.m2
 
-  # Runtime EAP 7.4 con JDK 8 (RHEL8)
+  # Runtime EAP 7.4 con Java 8 (fix anti CrashLoop)
   - name: eap
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-runtime-openshift-rhel8:7.4.23
       memoryLimit: 4Gi
       cpuLimit: 2000m
+
+      # Forzamos arranque estándar (evita problemas del launcher en workspace)
+      command: ["/opt/eap/bin/standalone.sh"]
+      args: ["-b", "0.0.0.0", "-bmanagement", "0.0.0.0"]
+
+      env:
+        - name: JBOSS_HOME
+          value: /opt/eap
+
+        # Heap conservador para evitar OOM con límites del workspace
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx1024m -Djava.net.preferIPv4Stack=true"
+
+      volumeMounts:
+        # Asegura escritura donde EAP lo necesita
+        - name: eap-data
+          path: /opt/eap/standalone/tmp
+        - name: eap-data
+          path: /opt/eap/standalone/data
+        - name: eap-data
+          path: /opt/eap/standalone/log
+        - name: eap-data
+          path: /opt/eap/standalone/deployments
+
       endpoints:
         - name: http
           targetPort: 8080
           exposure: public
-      env:
-        - name: JBOSS_BIND_ADDRESS
-          value: "0.0.0.0"
-        - name: JBOSS_BIND_ADDRESS_MANAGEMENT
-          value: "0.0.0.0"
 
 commands:
-  - id: verify-java8
+  - id: verify-images
     exec:
       component: build-jdk8
       workingDir: /projects
-      commandLine: java -version && mvn -version
+      commandLine: |
+        set -e
+        echo "[build-jdk8]"; java -version; mvn -version
 
   - id: build-ear
     exec:
       component: build-jdk8
       workingDir: /projects
-      commandLine: mvn -B -DskipTests -pl ear -am clean package
+      commandLine: |
+        set -e
+        mvn -B -DskipTests -pl ear -am clean package
+        ls -la ear/target || true
 
   - id: deploy-ear
     exec:
       component: eap
       workingDir: /projects
-      commandLine: >
-        /bin/bash -lc '
-          set -euo pipefail;
-          EAR=$(ls -1 ear/target/*.ear | head -n 1);
-          echo "Deploying: $EAR";
-          DEPLOY_DIR="${JBOSS_HOME}/standalone/deployments";
-          cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear";
-          touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy";
-          echo "Done."
-        '
+      commandLine: |
+        set -euo pipefail
+        EAR="$(ls -1 ear/target/*.ear | head -n 1)"
+        echo "Deploying: $EAR"
+        DEPLOY_DIR="${JBOSS_HOME}/standalone/deployments"
+        cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
+        touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
+        echo "Done."
+
+  - id: tail-eap-log
+    exec:
+      component: eap
+      workingDir: /projects
+      commandLine: |
+        set -e
+        LOG="${JBOSS_HOME}/standalone/log/server.log"
+        echo "Tailing: $LOG"
+        tail -n 200 -f "$LOG"
