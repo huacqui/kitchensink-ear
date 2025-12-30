@@ -9,7 +9,7 @@ components:
 
   - name: eap-data
     volume:
-      size: 5Gi
+      size: 10Gi
 
   # IDE / tooling Dev Spaces 3.25
   - name: development-tooling
@@ -24,7 +24,7 @@ components:
         - name: m2
           path: /home/user/.m2
 
-  # Build Java 8 (usamos la imagen S2I/builder de EAP 7.4 JDK8)
+  # Build con Java 8
   - name: build-jdk8
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
@@ -37,40 +37,38 @@ components:
         - name: m2
           path: /home/jboss/.m2
 
-  # Runtime EAP dentro del workspace: OJO -> usar builder (incluye el servidor)
+  # Runtime EAP dentro del workspace (usar launch de OpenShift + desactivar Jolokia)
   - name: eap
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
       memoryLimit: 4Gi
       cpuLimit: 2000m
 
-      # Script de arranque robusto: busca standalone.sh y arranca;
-      # si no existe, deja el contenedor vivo para inspección (evita CrashLoop)
+      # Importante: usar el launch script (maneja ajustes y evita placeholders sin resolver)
       command: ["/bin/bash", "-lc"]
       args:
         - |
           set -euo pipefail
-          # heap conservador para evitar OOM en workspaces
-          export JAVA_OPTS="${JAVA_OPTS:-}-Xms256m -Xmx1024m -Djava.net.preferIPv4Stack=true"
+          echo "Starting EAP via openshift-launch.sh"
+          exec /opt/eap/bin/openshift-launch.sh
 
-          for CAND in \
-            /opt/eap/bin/standalone.sh \
-            /opt/jboss/eap/bin/standalone.sh \
-            /opt/jboss/container/jboss-eap/bin/standalone.sh
-          do
-            if [ -x "$CAND" ]; then
-              echo "Starting EAP using: $CAND"
-              exec "$CAND" -b 0.0.0.0 -bmanagement 0.0.0.0
-            fi
-          done
+      env:
+        # Evita el error de Jolokia (bind/keystore)
+        - name: AB_JOLOKIA_OFF
+          value: "true"
 
-          echo "ERROR: standalone.sh not found in known locations."
-          echo "This typically happens when using a *runtime/intermediate* image that does not include the server."
-          echo "Use the S2I/builder image: jboss-eap-7/eap74-openjdk8-openshift-rhel8"
-          sleep infinity
+        # Evita placeholders de standalone-openshift.xml en este escenario “workspace”
+        - name: JBOSS_CONFIG
+          value: "standalone.xml"
+
+        # Asegura bind a todas las interfaces
+        - name: JBOSS_BIND_ADDRESS
+          value: "0.0.0.0"
+        - name: JBOSS_BIND_ADDRESS_MANAGEMENT
+          value: "0.0.0.0"
 
       volumeMounts:
-        # directorios que EAP escribe; además en estas imágenes deployments suele linkear a /deployments
+        # Layout /opt/eap (es el que mostraron tus logs)
         - name: eap-data
           path: /opt/eap/standalone/tmp
         - name: eap-data
@@ -78,7 +76,7 @@ components:
         - name: eap-data
           path: /opt/eap/standalone/log
         - name: eap-data
-          path: /deployments
+          path: /opt/eap/standalone/deployments
 
       endpoints:
         - name: http
@@ -112,23 +110,7 @@ commands:
         set -euo pipefail
         EAR="$(ls -1 ear/target/*.ear | head -n 1)"
         echo "Deploying: $EAR"
-
-        if [ -d /deployments ]; then
-          DEPLOY_DIR=/deployments
-        else
-          DEPLOY_DIR="${JBOSS_HOME:-/opt/eap}/standalone/deployments"
-        fi
-
+        DEPLOY_DIR="/opt/eap/standalone/deployments"
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
         echo "Done."
-
-  - id: tail-eap-log
-    exec:
-      component: eap
-      workingDir: /projects
-      commandLine: |
-        set -e
-        LOG="${JBOSS_HOME:-/opt/eap}/standalone/log/server.log"
-        echo "Tailing: $LOG"
-        tail -n 200 -f "$LOG"
