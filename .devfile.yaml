@@ -19,6 +19,7 @@ components:
       env:
         - name: MAVEN_OPTS
           value: "-Dmaven.repo.local=/home/user/.m2/repository"
+        # Fuerza Java 8 en el IDE
         - name: JAVA_HOME
           value: "/usr/lib/jvm/java-1.8.0-openjdk"
         - name: PATH
@@ -61,12 +62,15 @@ components:
           value: "0.0.0.0"
         - name: JBOSS_BIND_ADDRESS_MANAGEMENT
           value: "0.0.0.0"
+
+        # Evita conflicto con 9990 dentro del pod
         - name: JAVA_OPTS_APPEND
           value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
+
         - name: JAVA_MAX_MEM_RATIO
           value: "50"
 
-        # Path de tu app (ajustá esto)
+        # Path de la app para readiness + apertura
         - name: APP_PATH
           value: "/kitchensink"
 
@@ -117,6 +121,7 @@ commands:
       workingDir: /projects
       commandLine: |
         set -euo pipefail
+
         EAR="$(ls -1 ear/target/*.ear | head -n 1)"
         echo "Deploying: $EAR"
         DEPLOY_DIR="/opt/eap/standalone/deployments"
@@ -138,4 +143,13 @@ commands:
         exit 1
 
   - id: build-and-deploy
-    com
+    composite:
+      commands:
+        - build-ear
+        - deploy-ear-and-wait
+      parallel: false
+
+events:
+  postStart:
+    - verify-java8
+    - build-and-deploy
