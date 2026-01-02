@@ -3,17 +3,14 @@ metadata:
   name: kitchensink-ear-eap74-jdk8-devspaces325
 
 components:
-  # Cache Maven persistente
   - name: m2
     volume:
       size: 10Gi
 
-  # Datos EAP (para que tenga permisos de escritura en standalone/*)
   - name: eap-data
     volume:
       size: 10Gi
 
-  # IDE / tooling (Dev Spaces 3.25)
   - name: development-tooling
     container:
       image: registry.redhat.io/devspaces/udi-rhel9:3.25.0
@@ -25,12 +22,11 @@ components:
         - name: JAVA_HOME
           value: "/usr/lib/jvm/java-1.8.0-openjdk"
         - name: PATH
-          value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/home/user/.local/bin:/home/user/.java/current/bin:/home/user/node_modules/.bin/:/home/user/.npm-global/bin/:/opt/app-root/src/.npm-global/bin/:/usr/share/maven/bin:/usr/bin:/home/user/go/bin::/home/tooling/.local/bin:/home/tooling/.java/current/bin:/home/tooling/node_modules/.bin/:/home/tooling/.npm-global/bin/:/home/tooling/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/user/.dotnet/tools"
+          value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/usr/share/maven/bin:/usr/bin:/home/user/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin:/home/user/.dotnet/tools"
       volumeMounts:
         - name: m2
           path: /home/user/.m2
 
-  # Build con Java 8
   - name: build-jdk8
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
@@ -43,7 +39,6 @@ components:
         - name: m2
           path: /home/jboss/.m2
 
-  # Runtime EAP dentro del workspace (misma imagen builder, arranque OpenShift)
   - name: eap
     container:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
@@ -58,30 +53,20 @@ components:
           exec /opt/eap/bin/openshift-launch.sh
 
       env:
-        # Evita el error de Jolokia (keystore/bind)
         - name: AB_JOLOKIA_OFF
           value: "true"
-
-        # Evita placeholders de standalone-openshift.xml en modo workspace
         - name: JBOSS_CONFIG
           value: "standalone.xml"
-
-        # Bind de app y management
         - name: JBOSS_BIND_ADDRESS
           value: "0.0.0.0"
         - name: JBOSS_BIND_ADDRESS_MANAGEMENT
           value: "0.0.0.0"
-
-        # FIX: mover management ports (9990 ocupado en el pod)
         - name: JAVA_OPTS_APPEND
           value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
-
-        # Control de RAM (opcional)
         - name: JAVA_MAX_MEM_RATIO
           value: "50"
 
-        # PATH objetivo de la app (OPCIÓN 3)
-        # Ajusta este valor al contexto real de tu aplicación
+        # Path de tu app (ajustá esto)
         - name: APP_PATH
           value: "/kitchensink"
 
@@ -103,18 +88,19 @@ components:
           attributes:
             main: true
             openInBrowser: true
-            # Opción 3: pedir que abra directamente en este path
-            # (si la instalación no lo soporta, se ignora y abre "/")
             path: /kitchensink
 
 commands:
   - id: verify-java8
     exec:
-      component: build-jdk8
+      component: development-tooling
       workingDir: /projects
       commandLine: |
         set -e
-        echo "[build-jdk8]"; java -version; mvn -version
+        echo "[development-tooling] JAVA_HOME=$JAVA_HOME"
+        which java || true
+        java -version
+        mvn -version
 
   - id: build-ear
     exec:
@@ -125,44 +111,31 @@ commands:
         mvn -B -DskipTests -pl ear -am clean package
         ls -la ear/target || true
 
-  - id: deploy-ear
+  - id: deploy-ear-and-wait
     exec:
       component: eap
       workingDir: /projects
       commandLine: |
         set -euo pipefail
-
         EAR="$(ls -1 ear/target/*.ear | head -n 1)"
         echo "Deploying: $EAR"
         DEPLOY_DIR="/opt/eap/standalone/deployments"
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
 
-        # Esperar a que la app responda en el path deseado
         APP_PATH="${APP_PATH:-/}"
-        echo "Waiting for app at http://127.0.0.1:8080${APP_PATH} ..."
+        echo "Waiting for app: http://127.0.0.1:8080${APP_PATH}"
         for i in $(seq 1 120); do
           if curl -fsS "http://127.0.0.1:8080${APP_PATH}" >/dev/null 2>&1; then
-            echo "App is responding at ${APP_PATH}"
+            echo "App is responding."
             exit 0
           fi
           sleep 2
         done
 
-        echo "Timed out waiting for app readiness at ${APP_PATH}"
-        echo "Tip: verify the real context root and set APP_PATH accordingly."
+        echo "Timed out waiting for app readiness."
+        tail -n 120 /opt/eap/standalone/log/server.log || true
         exit 1
 
   - id: build-and-deploy
-    composite:
-      commands:
-        - build-ear
-        - deploy-ear
-      parallel: false
-    group:
-      kind: run
-      isDefault: true
-
-events:
-  postStart:
-    - build-and-deploy
+    com
