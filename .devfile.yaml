@@ -19,7 +19,6 @@ components:
       env:
         - name: MAVEN_OPTS
           value: "-Dmaven.repo.local=/home/user/.m2/repository"
-        # Fuerza Java 8 en el IDE
         - name: JAVA_HOME
           value: "/usr/lib/jvm/java-1.8.0-openjdk"
         - name: PATH
@@ -45,14 +44,12 @@ components:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
       memoryLimit: 4Gi
       cpuLimit: 2000m
-
       command: ["/bin/bash", "-lc"]
       args:
         - |
           set -euo pipefail
           echo "Starting EAP via /opt/eap/bin/openshift-launch.sh"
           exec /opt/eap/bin/openshift-launch.sh
-
       env:
         - name: AB_JOLOKIA_OFF
           value: "true"
@@ -62,18 +59,13 @@ components:
           value: "0.0.0.0"
         - name: JBOSS_BIND_ADDRESS_MANAGEMENT
           value: "0.0.0.0"
-
-        # Evita conflicto con 9990 dentro del pod
         - name: JAVA_OPTS_APPEND
           value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
-
         - name: JAVA_MAX_MEM_RATIO
           value: "50"
-
-        # Path de la app para readiness + apertura
+        # Path que querés abrir y chequear
         - name: APP_PATH
           value: "/kitchensink"
-
       volumeMounts:
         - name: eap-data
           path: /opt/eap/standalone/tmp
@@ -83,7 +75,6 @@ components:
           path: /opt/eap/standalone/log
         - name: eap-data
           path: /opt/eap/standalone/deployments
-
       endpoints:
         - name: eap-http
           targetPort: 8080
@@ -122,12 +113,29 @@ commands:
       commandLine: |
         set -euo pipefail
 
-        EAR="$(ls -1 ear/target/*.ear | head -n 1)"
+        # 1) Esperar a que exista el EAR (por si build y deploy arrancan casi juntos)
+        echo "Waiting for EAR artifact..."
+        for i in $(seq 1 120); do
+          EAR_CAND="$(ls -1 ear/target/*.ear 2>/dev/null | head -n 1 || true)"
+          if [ -n "${EAR_CAND}" ]; then
+            EAR="${EAR_CAND}"
+            break
+          fi
+          sleep 2
+        done
+
+        if [ -z "${EAR:-}" ]; then
+          echo "Timed out waiting for ear/target/*.ear"
+          exit 1
+        fi
+
+        # 2) Deploy
         echo "Deploying: $EAR"
         DEPLOY_DIR="/opt/eap/standalone/deployments"
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
 
+        # 3) Esperar readiness HTTP en el path configurado
         APP_PATH="${APP_PATH:-/}"
         echo "Waiting for app: http://127.0.0.1:8080${APP_PATH}"
         for i in $(seq 1 120); do
@@ -142,14 +150,8 @@ commands:
         tail -n 120 /opt/eap/standalone/log/server.log || true
         exit 1
 
-  - id: build-and-deploy
-    composite:
-      commands:
-        - build-ear
-        - deploy-ear-and-wait
-      parallel: false
-
 events:
   postStart:
     - verify-java8
-    - build-and-deploy
+    - build-ear
+    - deploy-ear-and-wait
