@@ -76,13 +76,16 @@ components:
         - name: JAVA_OPTS_APPEND
           value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
 
-        # Opcional: controla consumo de RAM si tu workspace es ajustado
-        # (puedes comentar si no lo necesitas)
+        # Control de RAM (opcional)
         - name: JAVA_MAX_MEM_RATIO
           value: "50"
 
+        # PATH objetivo de la app (OPCIÓN 3)
+        # Ajusta este valor al contexto real de tu aplicación
+        - name: APP_PATH
+          value: "/kitchensink"
+
       volumeMounts:
-        # Asegura escritura en rutas críticas de EAP (según tu log, JBOSS_HOME=/opt/eap)
         - name: eap-data
           path: /opt/eap/standalone/tmp
         - name: eap-data
@@ -93,9 +96,16 @@ components:
           path: /opt/eap/standalone/deployments
 
       endpoints:
-        - name: http
+        - name: eap-http
           targetPort: 8080
           exposure: public
+          protocol: http
+          attributes:
+            main: true
+            openInBrowser: true
+            # Opción 3: pedir que abra directamente en este path
+            # (si la instalación no lo soporta, se ignora y abre "/")
+            path: /kitchensink
 
 commands:
   - id: verify-java8
@@ -121,17 +131,38 @@ commands:
       workingDir: /projects
       commandLine: |
         set -euo pipefail
+
         EAR="$(ls -1 ear/target/*.ear | head -n 1)"
         echo "Deploying: $EAR"
         DEPLOY_DIR="/opt/eap/standalone/deployments"
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
-        echo "Done."
 
-  - id: tail-eap-log
-    exec:
-      component: eap
-      workingDir: /projects
-      commandLine: |
-        set -e
-        tail -n 200 -f /opt/eap/standalone/log/server.log
+        # Esperar a que la app responda en el path deseado
+        APP_PATH="${APP_PATH:-/}"
+        echo "Waiting for app at http://127.0.0.1:8080${APP_PATH} ..."
+        for i in $(seq 1 120); do
+          if curl -fsS "http://127.0.0.1:8080${APP_PATH}" >/dev/null 2>&1; then
+            echo "App is responding at ${APP_PATH}"
+            exit 0
+          fi
+          sleep 2
+        done
+
+        echo "Timed out waiting for app readiness at ${APP_PATH}"
+        echo "Tip: verify the real context root and set APP_PATH accordingly."
+        exit 1
+
+  - id: build-and-deploy
+    composite:
+      commands:
+        - build-ear
+        - deploy-ear
+      parallel: false
+    group:
+      kind: run
+      isDefault: true
+
+events:
+  postStart:
+    - build-and-deploy
