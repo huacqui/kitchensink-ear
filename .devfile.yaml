@@ -1,13 +1,6 @@
 schemaVersion: 2.2.0
 metadata:
   name: kitchensink-ear-eap74-jdk8-devspaces325
-attributes:
-  .vscode/extensions.json: |
-    {
-      "recommendations": [
-        "redhat.mta-vscode-extension"
-      ]
-    }
 projects:
   - name: kitchensink-ear
     git:

@@ -80,7 +80,7 @@
         <version.jboss.bom.eap>7.0.0.GA</version.jboss.bom.eap>
 
         <!-- WildFly Maven plug-in to deploy your WAR to a local JBoss EAP container -->
-        <version.wildfly.maven.plugin>1.0.2.Final</version.wildfly.maven.plugin>
+        <version.wildfly.maven.plugin>1.2.1.Final</version.wildfly.maven.plugin>
 
         <!-- other plug-in versions -->
         <version.ear.plugin>2.8</version.ear.plugin>
