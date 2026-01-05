@@ -1,6 +1,13 @@
 schemaVersion: 2.2.0
 metadata:
   name: kitchensink-ear-eap74-jdk8-devspaces325
+attributes:
+  .vscode/extensions.json: |
+    {
+      "recommendations": [
+        "redhat.mta-vscode-extension"
+      ]
+    }
 projects:
   - name: kitchensink-ear
     git:
@@ -30,10 +37,12 @@ components:
           value: "-Dmaven.repo.local=/home/user/.m2/repository"
         # Si tu UDI insiste en java 17 por PATH, tuviste que corregirlo antes;
         # acá lo dejamos controlado por JAVA_HOME + PATH.
-        - name: JAVA_HOME
+        #- name: JAVA_HOME
+        #  value: "/usr/lib/jvm/java-1.8.0-openjdk"
+        #- name: PATH
+        #  value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/usr/share/maven/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin:/home/user/.dotnet/tools"
+        - name: JDK8_HOME
           value: "/usr/lib/jvm/java-1.8.0-openjdk"
-        - name: PATH
-          value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/usr/share/maven/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin:/home/user/.dotnet/tools"
       volumeMounts:
         - name: m2
           path: /home/user/.m2
@@ -100,3 +109,30 @@ components:
           attributes:
             main: "true"
             openInBrowser: "true"
+commands:
+  - id: init-maven-toolchains
+    exec:
+      component: development-tooling
+      commandLine: |
+        set -e
+        mkdir -p /home/user/.m2
+        cat > /home/user/.m2/toolchains.xml <<'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <toolchains>
+          <toolchain>
+            <type>jdk</type>
+            <provides>
+              <version>1.8</version>
+              <vendor>openjdk</vendor>
+            </provides>
+            <configuration>
+              <jdkHome>/usr/lib/jvm/java-1.8.0-openjdk</jdkHome>
+            </configuration>
+          </toolchain>
+        </toolchains>
+        EOF
+        echo "toolchains.xml OK en /home/user/.m2/toolchains.xml"
+
+events:
+  postStart:
+    - init-maven-toolchains
