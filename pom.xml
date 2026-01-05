@@ -151,8 +151,7 @@
                     <version>${version.wildfly.maven.plugin}</version>
                     <inherited>true</inherited>
                     <configuration>
-                        <username>${env.EAP_ADMIN_USER}</username>
-                        <password>${env.EAP_ADMIN_PASS}</password>
+                        <skip>true</skip>
                     </configuration>
                 </plugin>
             </plugins>

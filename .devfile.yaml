@@ -1,10 +1,6 @@
 schemaVersion: 2.2.0
 metadata:
   name: kitchensink-ear-eap74-jdk8-devspaces325
-variables:
-  EAP_ADMIN_USER: admin
-  EAP_ADMIN_PASS: admin123!
-
 projects:
   - name: kitchensink-ear
     git:
@@ -29,11 +25,6 @@ components:
       memoryLimit: 6Gi
       cpuLimit: 4000m
       env:
-        # Credenciales para Arquillian (para usarlas desde arquillian.xml o filtrado de resources)
-        - name: ARQ_USER
-          value: "{{EAP_ADMIN_USER}}"
-        - name: ARQ_PASS
-          value: "{{EAP_ADMIN_PASS}}"
 
         - name: MAVEN_OPTS
           value: "-Dmaven.repo.local=/home/user/.m2/repository"
@@ -89,12 +80,6 @@ components:
         # (Alinealo con el contexto real de tu app)
         - name: APP_PATH
           value: "/jboss-kitchensink-ear-web"
-          # Crea el usuario de management
-        - name: ADMIN_USERNAME
-          value: "{{EAP_ADMIN_USER}}"
-        - name: ADMIN_PASSWORD
-          value: "{{EAP_ADMIN_PASS}}"
-
       volumeMounts:
         - name: eap-data
           path: /opt/eap/standalone/tmp
