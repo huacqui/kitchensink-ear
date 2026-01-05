@@ -69,8 +69,8 @@ components:
           value: "0.0.0.0"
 
         # Workaround: mover management fuera del 9990 (en Dev Spaces suele estar ocupado en el Pod)
-        - name: JAVA_OPTS_APPEND
-          value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
+       # - name: JAVA_OPTS_APPEND
+       #  value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
 
         # Control de memoria (opcional)
         - name: JAVA_MAX_MEM_RATIO
