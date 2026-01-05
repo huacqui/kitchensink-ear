@@ -34,6 +34,12 @@
         <!--<configuration> -->
         <!--<property name="jbossHome">/path/to/jboss/as</property> -->
         <!--</configuration> -->
+      <configuration>
+  <property name="managementAddress">127.0.0.1</property>
+  <property name="managementPort">9990</property>
+  <property name="username">${env.ARQ_USER}</property>
+  <property name="password">${env.ARQ_PASS}</property>
+</configuration>
    </container>
 
 </arquillian>
