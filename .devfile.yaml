@@ -19,11 +19,10 @@ components:
       env:
         - name: MAVEN_OPTS
           value: "-Dmaven.repo.local=/home/user/.m2/repository"
-        # Forzar Java 8 en el IDE (evita que gane ~/.java/current)
         - name: JAVA_HOME
           value: "/usr/lib/jvm/java-1.8.0-openjdk"
         - name: PATH
-          value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/usr/share/maven/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin"
+          value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/usr/share/maven/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin:/home/user/.dotnet/tools"
       volumeMounts:
         - name: m2
           path: /home/user/.m2
@@ -45,18 +44,15 @@ components:
       image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
       memoryLimit: 4Gi
       cpuLimit: 2000m
-
       command: ["/bin/bash", "-lc"]
       args:
         - |
           set -euo pipefail
           echo "Starting EAP via /opt/eap/bin/openshift-launch.sh"
           exec /opt/eap/bin/openshift-launch.sh
-
       env:
         - name: AB_JOLOKIA_OFF
           value: "true"
-
         - name: JBOSS_CONFIG
           value: "standalone.xml"
 
@@ -65,16 +61,16 @@ components:
         - name: JBOSS_BIND_ADDRESS_MANAGEMENT
           value: "0.0.0.0"
 
-        # Mantengo tu workaround (evita colisión con 9990)
+        # Mantengo tu workaround (por colisión 9990 en el pod)
         - name: JAVA_OPTS_APPEND
           value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
 
         - name: JAVA_MAX_MEM_RATIO
           value: "50"
 
-        # Path de la app (debe coincidir con endpoints.path)
+        # Path REAL del quickstart (según README del repo)
         - name: APP_PATH
-          value: "/kitchensink"
+          value: "/jboss-kitchensink-ear-web"
 
       volumeMounts:
         - name: eap-data
@@ -91,28 +87,15 @@ components:
           targetPort: 8080
           exposure: public
           protocol: http
-          # Opción A: el navegador abre directamente este path
-          path: /kitchensink
+          path: /jboss-kitchensink-ear-web
           attributes:
             main: "true"
             openInBrowser: "true"
 
 commands:
-  - id: verify-java8
-    exec:
-      component: development-tooling
-      workingDir: /projects
-      commandLine: |
-        set -e
-        echo "JAVA_HOME=$JAVA_HOME"
-        which java || true
-        java -version
-        mvn -version
-
   - id: build-ear
     exec:
-      # Construimos desde tooling (ya tenés Java 8 controlado allí)
-      component: development-tooling
+      component: build-jdk8
       workingDir: /projects
       commandLine: |
         set -e
@@ -126,15 +109,17 @@ commands:
       commandLine: |
         set -euo pipefail
 
-        # Esperar el EAR (por si el build tarda)
+        # Esperar el EAR (sin matar el workspace si tarda)
+        EAR=""
         for i in $(seq 1 180); do
           EAR="$(ls -1 ear/target/*.ear 2>/dev/null | head -n 1 || true)"
           if [ -n "${EAR:-}" ]; then break; fi
           sleep 2
         done
+
         if [ -z "${EAR:-}" ]; then
-          echo "No se encontró ear/target/*.ear"
-          exit 1
+          echo "WARN: No se encontró ear/target/*.ear todavía; no hago fail del postStart."
+          exit 0
         fi
 
         echo "Deploying: $EAR"
@@ -142,11 +127,17 @@ commands:
         cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
         touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
 
-        # Mensaje útil para el usuario
-        echo "Deploy disparado. Abrí el endpoint 'eap-http' (path: ${APP_PATH})."
+        # Espera suave: validar puerto 8080 (no falla si no responde)
+        echo "Waiting (best-effort) for 8080 to be listening..."
+        for i in $(seq 1 60); do
+          (echo > /dev/tcp/127.0.0.1/8080) >/dev/null 2>&1 && break || true
+          sleep 2
+        done
+
+        echo "Done. Abrí el endpoint eap-http (path: ${APP_PATH})."
+        exit 0
 
 events:
   postStart:
-    - verify-java8
     - build-ear
     - deploy-ear
