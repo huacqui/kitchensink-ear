@@ -38,18 +38,6 @@ components:
         - name: m2
           path: /home/user/.m2
 
-  # Build con Java 8 (opcional; si tu tooling ya quedó 100% en Java 8, podés no usar este componente)
-  - name: build-jdk8
-    container:
-      image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
-      memoryLimit: 6Gi
-      cpuLimit: 4000m
-      env:
-        - name: MAVEN_OPTS
-          value: "-Dmaven.repo.local=/home/jboss/.m2/repository"
-      volumeMounts:
-        - name: m2
-          path: /home/jboss/.m2
 
   # Runtime EAP dentro del workspace (misma imagen OpenShift/S2I)
   - name: eap
@@ -113,65 +101,3 @@ components:
           attributes:
             main: "true"
             openInBrowser: "true"
-
-commands:
-  # Diagnóstico rápido (opcional)
-  - id: verify-tooling
-    exec:
-      component: development-tooling
-      workingDir: /projects/kitchensink-ear
-      commandLine: |
-        set -e
-        echo "JAVA_HOME=$JAVA_HOME"
-        which java || true
-        java -version
-        mvn -version
-
-  # Build (podés usar development-tooling o build-jdk8; dejo ambos y elegís)
-  - id: build-ear-tooling
-    exec:
-      component: development-tooling
-      workingDir: /projects/kitchensink-ear
-      commandLine: |
-        set -e
-        mvn -B -DskipTests -pl ear -am clean package
-        ls -la ear/target || true
-
-  - id: build-ear-jdk8
-    exec:
-      component: build-jdk8
-      workingDir: /projects/kitchensink-ear
-      commandLine: |
-        set -e
-        mvn -B -DskipTests -pl ear -am clean package
-        ls -la ear/target || true
-
-  # Deploy copiando el EAR a deployments y disparando dodeploy
-  - id: deploy-ear
-    exec:
-      component: eap
-      workingDir: /projects/kitchensink-ear
-      commandLine: |
-        set -euo pipefail
-
-        EAR="$(ls -1 ear/target/*.ear 2>/dev/null | head -n 1 || true)"
-        if [ -z "${EAR:-}" ]; then
-          echo "No encuentro ear/target/*.ear. Ejecutá primero build-ear-*."
-          exit 1
-        fi
-
-        echo "Deploying: $EAR"
-        DEPLOY_DIR="/opt/eap/standalone/deployments"
-        cp -f "$EAR" "${DEPLOY_DIR}/kitchensink.ear"
-        touch "${DEPLOY_DIR}/kitchensink.ear.dodeploy"
-
-        echo "Deploy disparado. Abrí endpoint eap-http (path: ${APP_PATH})."
-
-  # Logs del servidor
-  - id: tail-eap-log
-    exec:
-      component: eap
-      workingDir: /projects/kitchensink-ear
-      commandLine: |
-        set -e
-        tail -n 200 -f /opt/eap/standalone/log/server.log
