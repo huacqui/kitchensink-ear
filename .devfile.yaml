@@ -1,0 +1,114 @@
+schemaVersion: 2.2.0
+metadata:
+  name: kitchensink-ear-eap74-jdk8-devspaces325
+projects:
+  - name: kitchensink-ear
+    git:
+      remotes:
+        origin: https://github.com/huacqui/kitchensink-ear.git
+
+components:
+  # Maven cache persistente
+  - name: m2
+    volume:
+      size: 10Gi
+
+  # Persistencia para EAP (logs/tmp/data/deployments)
+  - name: eap-data
+    volume:
+      size: 10Gi
+
+  # IDE / tooling (Dev Spaces 3.25)
+  - name: development-tooling
+    container:
+      image: registry.redhat.io/devspaces/udi-rhel9:3.25.0
+      memoryLimit: 6Gi
+      cpuLimit: 4000m
+      env:
+
+        - name: MAVEN_OPTS
+          value: "-Dmaven.repo.local=/home/user/.m2/repository"
+        # Si tu UDI insiste en java 17 por PATH, tuviste que corregirlo antes;
+        # acá lo dejamos controlado por JAVA_HOME + PATH.
+        #- name: JAVA_HOME
+        #  value: "/usr/lib/jvm/java-1.8.0-openjdk"
+        #- name: PATH
+        #  value: "/usr/lib/jvm/java-1.8.0-openjdk/bin:/checode/checode-linux-libc/ubi9/bin/remote-cli:/home/user/.local/bin:/home/user/bin:/usr/share/Modules/bin:/usr/share/maven/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin:/home/user/.dotnet/tools"
+        - name: JDK8_HOME
+          value: "/usr/lib/jvm/java-1.8.0-openjdk"
+      volumeMounts:
+        - name: m2
+          path: /home/user/.m2
+
+
+  # Runtime EAP dentro del workspace (misma imagen OpenShift/S2I)
+  - name: eap
+    container:
+      image: registry.redhat.io/jboss-eap-7/eap74-openjdk8-openshift-rhel8:7.4.23
+      memoryLimit: 4Gi
+      cpuLimit: 2000m
+
+      command: ["/bin/bash", "-lc"]
+      args:
+        - |
+          set -euo pipefail
+          echo "Starting EAP via /opt/eap/bin/openshift-launch.sh (JBOSS_CONFIG=${JBOSS_CONFIG})"
+          exec /opt/eap/bin/openshift-launch.sh
+
+      env:
+        # Evita el error de Jolokia/keystore/bind en workspace
+        - name: AB_JOLOKIA_OFF
+          value: "true"
+
+        # Config propia de OpenShift (evita placeholders sin resolver)
+        - name: JBOSS_CONFIG
+          value: "standalone-openshift.xml"
+
+        # Bind de app y management
+        - name: JBOSS_BIND_ADDRESS
+          value: "0.0.0.0"
+        - name: JBOSS_BIND_ADDRESS_MANAGEMENT
+          value: "0.0.0.0"
+
+        # Workaround: mover management fuera del 9990 (en Dev Spaces suele estar ocupado en el Pod)
+       # - name: JAVA_OPTS_APPEND
+       #  value: "-Djboss.management.http.port=9991 -Djboss.management.native.port=9992 -Djava.net.preferIPv4Stack=true"
+
+        # Control de memoria (opcional)
+        - name: JAVA_MAX_MEM_RATIO
+          value: "50"
+
+        # Opción A: el path que querés abrir por defecto en el endpoint
+        # (Alinealo con el contexto real de tu app)
+        - name: APP_PATH
+          value: "/jboss-kitchensink-ear-web"
+      volumeMounts:
+        - name: eap-data
+          path: /opt/eap/standalone/tmp
+        - name: eap-data
+          path: /opt/eap/standalone/data
+        - name: eap-data
+          path: /opt/eap/standalone/log
+        - name: eap-data
+          path: /opt/eap/standalone/deployments
+
+      endpoints:
+        - name: eap-http
+          targetPort: 8080
+          exposure: public
+          protocol: http
+          # Opción A: esto define el path que abre la UI al “Open in Browser”
+          path: /jboss-kitchensink-ear-web
+          attributes:
+            main: "true"
+            openInBrowser: "true"
+commands:
+  - id: init-maven-java-8
+    exec:
+      component: development-tooling
+      commandLine: |
+        export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+        export PATH="$JAVA_HOME/bin:$PATH"
+events:
+  postStart:
+    - init-maven-java-8
